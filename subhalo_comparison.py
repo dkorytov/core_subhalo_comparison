@@ -1,4 +1,4 @@
-#!/usr/bin/env python2.7
+#!/usr/bin/env python3
 
 from __future__ import print_function, division 
 import numpy as np
@@ -35,7 +35,7 @@ def load_core_catalog(fname):
     load_gio_into_dict(fname, result, 'vx')
     load_gio_into_dict(fname, result, 'vy')
     load_gio_into_dict(fname, result, 'vz')   
-    load_gio_into_dict(fname, result, 'infall_mass')
+    load_gio_into_dict(fname, result, 'infall_tree_node_mass')
     load_gio_into_dict(fname, result, 'infall_step')
     load_gio_into_dict(fname, result, 'radius')
     load_gio_into_dict(fname, result, 'fof_halo_tag')
@@ -179,7 +179,6 @@ def find_closest(cores, subhalos, r_max, rl):
             subhalos['core_mass'][closest_subhalo_index] = cores['infall_mass'][core_index]
     print(t0)
     
-
 def find_closest_ckdtree(cores, subhalos, r_max, rl, match_cores_to_subhalos=True):
     subhalo_cat_length = len(subhalos['subhalo_mean_x'])
     cores_size = len(cores['x'])
@@ -204,14 +203,14 @@ def find_closest_ckdtree(cores, subhalos, r_max, rl, match_cores_to_subhalos=Tru
                 if subhalos['core_index'][subhalo_index] ==-1:
                     assign_core_to_subhalo = True
                 else:
-                    if subhalos['core_mass'][subhalo_index] < cores['infall_mass'][core_index]:
+                    if subhalos['core_mass'][subhalo_index] < cores['infall_tree_node_mass'][core_index]:
                         assign_core_to_subhalo = True
                         # un-pair the currently paired core from the subhalo since we found a heavier
                         # core for the subhalo
                         cores['subhalo_index'][subhalos['core_index'][subhalo_index]] = -1 
                 if assign_core_to_subhalo:
                     subhalos['core_index'][subhalo_index] = core_index
-                    subhalos['core_mass'][subhalo_index]  = cores['infall_mass'][core_index]
+                    subhalos['core_mass'][subhalo_index]  = cores['infall_tree_node_mass'][core_index]
                     cores['subhalo_index'][core_index] = subhalo_index
     else: #match subhalos to cores
         ckdtree = cKDTree(core_xyz_mat, balanced_tree=False, compact_nodes=False)
@@ -251,7 +250,7 @@ def find_closest_ckdtree(cores, subhalos, r_max, rl, match_cores_to_subhalos=Tru
         print(distances[~np.isfinite(distances)])
         subhalos['core_index'] = core_index
 
-        subhalos['core_mass'][slct_found_element] = cores['infall_mass'][core_index[slct_found_element]]
+        subhalos['core_mass'][slct_found_element] = cores['infall_tree_node_mass'][core_index[slct_found_element]]
         subhalos['core_index'][~slct_found_element] = -1
         subhalos['distance_to_core'] = distances
         subhalo_indexes = np.arange(len(subhalos['core_index']), dtype=int)
@@ -370,9 +369,9 @@ def construct_fof_merged_cores(cores, fof_colors):
     eta.print_done()
     return fof_merged_cores
 
-def fof_core_and_halo_merging(link_length, cores_fname):
+def fof_core_and_halo_merging(link_length, cores_fname, fof_fname='/data/a/cpac/dkorytov/data/AlphaQ/b0168/STEP499/m000-499.fofproperties'):
     print("\n\nFoF Merging of cores\n\n")
-    halos = load_fof_halo_catalog('/home/dkorytov/data/AlphaQ/fof/m000-499.fofproperties')
+    halos = load_fof_halo_catalog(fof_fname)
     cores = load_core_catalog(cores_fname)
     combine_cores_with_fof_halos(cores, halos)
     if link_length != 0:
@@ -395,7 +394,8 @@ def get_unit_vector(dx, dy, dz):
 
 def combine_cores_with_fof_halos(cores, halos):
     matched_indexes = dtk.search_sorted(halos['fof_halo_tag'], cores['fof_halo_tag'])
-    assert np.sum(matched_indexes == -1)==0, "hmm every core should be in a fof halo"
+    print(np.sum(matched_indexes == -1)/matched_indexes.size)
+    # assert np.sum(matched_indexes == -1)==0, "hmm every core should be in a fof halo"
     dvx = cores['vx'] - halos['fof_halo_mean_vx'][matched_indexes]
     dvy = cores['vy'] - halos['fof_halo_mean_vy'][matched_indexes]
     dvz = cores['vz'] - halos['fof_halo_mean_vz'][matched_indexes]
@@ -419,7 +419,8 @@ def combine_cores_with_fof_halos(cores, halos):
 
 def combine_subhalos_with_fof_halos(subhalos, halos):
     matched_indexes = dtk.search_sorted(halos['fof_halo_tag'], subhalos['fof_halo_tag'])
-    assert np.sum(matched_indexes == -1) == 0, "hmm every subhalo should be in a fof halo"
+    print("matched indexes: ", np.sum(matched_indexes != -1)/float(len(matched_indexes)))
+    # assert np.sum(matched_indexes == -1) == 0, "hmm every subhalo should be in a fof halo"
     dvx = subhalos['subhalo_mean_vx'] - halos['fof_halo_mean_vx'][matched_indexes]
     dvy = subhalos['subhalo_mean_vy'] - halos['fof_halo_mean_vy'][matched_indexes]
     dvz = subhalos['subhalo_mean_vz'] - halos['fof_halo_mean_vz'][matched_indexes]
@@ -528,7 +529,7 @@ def plot_unmatched_cores_subhalos(cores, subhalos, particles, nth_largest, plot_
             subhalos['subhalo_tag'][target_subhalo_index],
             subhalos['fof_halo_tag'][target_subhalo_index]))
     plt.legend(loc='best')
-    
+    plt.show()
     dtk.save_figs("./figs/unmatched_cores/")
     plt.close()
         
@@ -538,24 +539,28 @@ def select_inner_objects(x, y, z, rL, exclusion_length):
     slct_z = (z > exclusion_length) & (z < rL-exclusion_length)
     return slct_x & slct_y & slct_z
 
-def subhalo_comparison(load_cache=False, link_length=0.1, core_fname='/home/dkorytov/data/AlphaQ/core_catalog5/07_13_17.AlphaQ.499.coreproperties'):
+def subhalo_comparison(load_cache=False, link_length=0.1,
+                       core_fname='/home/dkorytov/data/AlphaQ/core_catalog5/07_13_17.AlphaQ.499.coreproperties',
+                       sod_fname='/data/a/cpac/dkorytov/data/AlphaQ/halos/m000-499.haloproperties',
+                       subhalo_fname='/data/a/cpac/dkorytov/data/AlphaQ/subhalos/m000-499.subhaloproperties',
+                       particles_fname='/data/a/cpac/dkorytov/data/AlphaQ/b0168/STEP499/m000-499.bighaloparticles'):
     print("Subhalo Comparison")
     ALPHAQ_RL = 256.0
     # if not load_cache:
         # cores = load_core_catalog('/home/dkorytov/data/AlphaQ/core_catalog5/07_13_17.AlphaQ.499.coreproperties')
         # exit()
     cores = dtk.load_dict_hdf5('cache/fof_merged_cores.ll={:1.3f}.hdf5'.format(link_length))
-    cores = dtk.select_dict(cores, cores['infall_mass']>1.1e11)
-    subhalos = load_subhalo_catalog('/home/dkorytov/data/AlphaQ/subhalos/m000-499.subhaloproperties')
-    particles = load_bighalo_particle_catalog('/media/luna1/dkorytov/data/AlphaQ/big_halo_prtcls2/m000-499.bighaloparticles')
-    accum_particles = load_accum_particle_catalog('/media/luna1/dkorytov/data/AlphaQ/accum/m000-499.accumulatedcores')
-    halos = load_fof_halo_catalog('/home/dkorytov/data/AlphaQ/fof/m000-499.fofproperties')
+    cores = dtk.select_dict(cores, cores['infall_tree_node_mass']>1.1e11)
+    subhalos = load_subhalo_catalog(subhalo_fname)
+    particles = load_bighalo_particle_catalog('/data/a/cpac/dkorytov/data/AlphaQ/bighalo_particles/m000-499.bighaloparticles')
+    accum_particles = None #load_accum_particle_catalog('/media/luna1/dkorytov/data/AlphaQ/accum/m000-499.accumulatedcores')
+    halos = load_fof_halo_catalog('/data/a/cpac/dkorytov/data/AlphaQ/b0168/STEP499/m000-499.fofproperties')
     combine_subhalos_with_fof_halos(subhalos, halos)
 
     # subhalos = dtk.select_dict(subhalos, subhalos['subhalo_tag'] != 0)
     # del cores['core_indexes']
     # cores  = dtk.select_dict(cores,    cores['central'] == 0)
-    find_closest_ckdtree(cores, subhalos, 0.1, ALPHAQ_RL, match_cores_to_subhalos=False)
+    find_closest_ckdtree(cores, subhalos, 0.1, ALPHAQ_RL, match_cores_to_subhalos=True)
         # dtk.save_dict_hdf5('cache/cores.search=0.1.hdf5', cores)
         # dtk.save_dict_hdf5('cache/subhalos.search=0.1hdf5', subhalos)
     # else:#load cache
@@ -567,9 +572,10 @@ def subhalo_comparison(load_cache=False, link_length=0.1, core_fname='/home/dkor
     #     subhalos2 = load_subhalo_catalog('/home/dkorytov/data/AlphaQ/subhalos/m000-499.subhaloproperties')
     #     cores = combine_dict(cores, cores2)
     #     subhalos = combine_dict(subhalos, subhalos2)
-
-    for i in range(0, 300):
-        plot_unmatched_cores_subhalos(cores, subhalos, particles, i, 2.0, unmatched_cores=False, accum_particles=accum_particles)
+    plot_unmatched = False
+    if plot_unmatched:
+        for i in range(0, 300):
+            plot_unmatched_cores_subhalos(cores, subhalos, particles, i, 2.0, unmatched_cores=False, accum_particles=accum_particles)
     edge_buffer = 4
     far_from_edge_x = ( subhalos['subhalo_mean_x'] > edge_buffer) & (subhalos['subhalo_mean_x'] < ALPHAQ_RL-edge_buffer)
     far_from_edge_y = ( subhalos['subhalo_mean_y'] > edge_buffer) & (subhalos['subhalo_mean_y'] < ALPHAQ_RL-edge_buffer)
@@ -585,16 +591,16 @@ def subhalo_comparison(load_cache=False, link_length=0.1, core_fname='/home/dkor
     
 
     plt.figure()
-    h_with, xbins = np.histogram(subhalos['subhalo_mass'][slct], bins=np.logspace(10,15,100))
-    plt.plot(dtk.bins_center(xbins), h_with, label='Subhalos w/ Cores')
-    h_without, xbins = np.histogram(subhalos['subhalo_mass'][slct_coreless], bins=np.logspace(10,15,100))
-    plt.plot(dtk.bins_center(xbins), h_without, label='Subhalos w/o Cores')
+    h_with, xbins = np.histogram(subhalos['subhalo_mass'][slct], bins=np.logspace(11,15,64))
+    plt.plot(dtk.bins_center(xbins), h_with, color='tab:orange', label='subhalos with cores')
+    h_without, xbins = np.histogram(subhalos['subhalo_mass'][slct_coreless], bins=np.logspace(11,15,64))
+    plt.plot(dtk.bins_center(xbins), h_without, color='tab:blue', label='subhalos with out cores')
     plt.xscale('log')
     plt.yscale('log')
     plt.ylabel('Count')
     plt.xlabel('Subhalo Mass [$h^{-1}$ M$_\odot$]')
     plt.legend(loc='best')
-    plt.axvline(1.6e11, ls='--', color='k', label='100 particles')
+    plt.axvline(1.6e11, ls='--', color='k', label='100 particles mass')
     plt.legend(loc='best', framealpha=0.0)
 
     plt.tight_layout()
@@ -602,16 +608,17 @@ def subhalo_comparison(load_cache=False, link_length=0.1, core_fname='/home/dkor
     plt.figure()
     h_tot = h_with+h_without
     plt.semilogx(dtk.bins_center(xbins), h_with/h_tot)
-    plt.ylabel('Fraction with Core')
+    plt.ylabel('Fraction of Subhalos with Cores')
     plt.axvline(1.6e11, ls='--', color='k', label='100 particles')
     plt.xlabel('Subhalo Mass [$h^{-1}$ M$_\odot$]')
     plt.legend(loc='best', framealpha=0.0)
+    plt.ylim([0.0,1.0])
     plt.tight_layout()
 
     plt.figure()
     slct_core_with_subhalo = cores['subhalo_index']!=-1
-    h_with, xbins = np.histogram(cores['infall_mass'][slct_core_with_subhalo], bins=np.logspace(11, 16, 100))
-    h_tot, xbins = np.histogram(cores['infall_mass'], bins=np.logspace(11, 16, 100))
+    h_with, xbins = np.histogram(cores['infall_tree_node_mass'][slct_core_with_subhalo], bins=np.logspace(11, 16, 100))
+    h_tot, xbins = np.histogram(cores['infall_tree_node_mass'], bins=np.logspace(11, 16, 100))
     plt.semilogx(dtk.bins_center(xbins), h_with/h_tot)
     plt.ylabel('Fraction w/ Subhalo')
     plt.xlabel('Merged Core Infall Mass Sum [$h^{-1}$ M$_\odot$]')
@@ -625,7 +632,7 @@ def subhalo_comparison(load_cache=False, link_length=0.1, core_fname='/home/dkor
         slct_satellite = subhalos['subhalo_tag'] != 0
         slct_with_core = (subhalos['core_index'] != -1) & slct_satellite
         slct_above_cut = (subhalos['subhalo_mass'] > mass_cut) & slct_satellite
-        print("Mass cut: ", mass_cut)
+        print("Mass cut: {:.2e} [{:d}]".format(mass_cut, int(lim)))
         print("\t with core: ", np.sum(slct_with_core & slct_above_cut))
         print("\t above cut: ", np.sum(slct_above_cut))
         print("\tpercentage: ", np.float(np.sum(slct_with_core & slct_above_cut)/np.sum(slct_above_cut)))
@@ -634,7 +641,19 @@ def subhalo_comparison(load_cache=False, link_length=0.1, core_fname='/home/dkor
     plt.figure()
     slct_subhalo_with_core = subhalos['core_index']!=-1
     h_with, xbins = np.histogram(cores['subhalo_index'][slct_core_with_subhalo], bins=np.logspace(11, 16, 100))
-    h_tot, xbins = np.histogram(cores['infall_mass'], bins=np.logspace(11, 16, 100))
+    h_tot, xbins = np.histogram(cores['infall_tree_node_mass'], bins=np.logspace(11, 16, 100))
+    plt.semilogx(dtk.bins_center(xbins), h_with/h_tot)
+    plt.ylabel('Fraction with Core')
+    plt.xlabel('[$h^{-1}$ M$_\odot$]')
+    plt.ylim([0,1])
+    plt.axvline(1.6e11, ls='--', color='k', label='100 particles')
+    plt.legend(loc='best')
+    plt.tight_layout()
+
+    plt.figure()
+    slct_subhalo_with_core = subhalos['core_index']!=-1
+    h_with, xbins = np.histogram(cores['subhalo_index'][slct_core_with_subhalo], bins=np.logspace(11, 16, 100))
+    h_tot, xbins = np.histogram(cores['infall_tree_node_mass'], bins=np.logspace(11, 16, 100))
     plt.semilogx(dtk.bins_center(xbins), h_with/h_tot)
     plt.ylabel('Fraction with Core')
     plt.xlabel('[$h^{-1}$ M$_\odot$]')
@@ -667,11 +686,12 @@ def subhalo_comparison(load_cache=False, link_length=0.1, core_fname='/home/dkor
     plt.figure()    
     distance = distance_between_core_and_subhalo(cores, subhalos['core_index'][slct], subhalos, np.arange(len(subhalos['subhalo_mean_x']))[slct], ALPHAQ_RL)
     print(distance)
-    h, xbins = np.histogram(distance, bins=np.linspace(1e-3, .6, 100))
+    h, xbins = np.histogram(distance, bins=np.linspace(0, .11, 100))
     xbins_cen = dtk.bins_avg(xbins)
     plt.plot(xbins_cen, h, '-')
     plt.xlabel('Core-Subhalo Separation [$h^{-1}$ Mpc]')
     plt.ylabel('Count')
+    plt.ylim([0,plt.ylim()[1]])
     plt.tight_layout()
 
     plt.figure()
@@ -730,7 +750,7 @@ def subhalo_comparison(load_cache=False, link_length=0.1, core_fname='/home/dkor
     plt.tight_layout()
 
 
-    if True: # plot absolute velocities
+    if False: # plot absolute velocities
         core_velocity_mags = velocity_magnitude(cores['vx'], cores['vy'], cores['vz'])
         subhalo_velocity_mags = velocity_magnitude(subhalos['subhalo_mean_vx'], subhalos['subhalo_mean_vy'], subhalos['subhalo_mean_vz'])
         velocity_ratio = core_velocity_mags[subhalos['core_index'][slct]]/subhalo_velocity_mags[slct]
@@ -790,11 +810,11 @@ def subhalo_comparison(load_cache=False, link_length=0.1, core_fname='/home/dkor
         plt.tight_layout()
 
         plt.figure()
-        h, xbins, ybins = np.histogram2d(cores['infall_mass'][subhalos['core_index'][slct]], core_subhalo_angle, bins=(np.logspace(11,16,100), np.linspace(0, 180, 100)))
+        h, xbins, ybins = np.histogram2d(cores['infall_tree_node_mass'][subhalos['core_index'][slct]], core_subhalo_angle, bins=(np.logspace(11,16,100), np.linspace(0, 180, 100)))
         plt.pcolor(xbins, ybins, h.T, cmap='Blues', norm=clr.LogNorm())
-        binned_average = dtk.binned_average(cores['infall_mass'][subhalos['core_index'][slct]], core_subhalo_angle, xbins)
+        binned_average = dtk.binned_average(cores['infall_tree_node_mass'][subhalos['core_index'][slct]], core_subhalo_angle, xbins)
         plt.semilogx(dtk.bins_center(xbins), binned_average, '-r', label='Average')
-        binned_median = dtk.binned_median(cores['infall_mass'][subhalos['core_index'][slct]], core_subhalo_angle, xbins)
+        binned_median = dtk.binned_median(cores['infall_tree_node_mass'][subhalos['core_index'][slct]], core_subhalo_angle, xbins)
         plt.semilogx(dtk.bins_center(xbins), binned_median, '--r', label='Median')
         plt.xlabel("Core Infall Mass")
         plt.ylabel("Velocity Angle Separation")
@@ -816,7 +836,7 @@ def subhalo_comparison(load_cache=False, link_length=0.1, core_fname='/home/dkor
 
 
     # Core Subhalo relative velocities
-    if True: # plot relative velocities
+    if False: # plot relative velocities
         core_relative_velocity_mags = velocity_magnitude(cores['halo_relative_vx'], cores['halo_relative_vy'], cores['halo_relative_vz'])
         subhalo_relative_velocity_mags = velocity_magnitude(subhalos['halo_relative_vx'], subhalos['halo_relative_vy'], subhalos['halo_relative_vz'])
         relative_velocity_ratio = core_relative_velocity_mags[subhalos['core_index'][slct]]/subhalo_relative_velocity_mags[slct]
@@ -876,11 +896,11 @@ def subhalo_comparison(load_cache=False, link_length=0.1, core_fname='/home/dkor
         plt.tight_layout()
 
         plt.figure()
-        h, xbins, ybins = np.histogram2d(cores['infall_mass'][subhalos['core_index'][slct]], core_subhalo_relative_angle, bins=(np.logspace(11,16,100), np.linspace(0, 180, 100)))
+        h, xbins, ybins = np.histogram2d(cores['infall_tree_node_mass'][subhalos['core_index'][slct]], core_subhalo_relative_angle, bins=(np.logspace(11,16,100), np.linspace(0, 180, 100)))
         plt.pcolor(xbins, ybins, h.T, cmap='Blues', norm=clr.LogNorm())
-        binned_average = dtk.binned_average(cores['infall_mass'][subhalos['core_index'][slct]], core_subhalo_relative_angle, xbins)
+        binned_average = dtk.binned_average(cores['infall_tree_node_mass'][subhalos['core_index'][slct]], core_subhalo_relative_angle, xbins)
         plt.semilogx(dtk.bins_center(xbins), binned_average, '-r', label='Average')
-        binned_median = dtk.binned_median(cores['infall_mass'][subhalos['core_index'][slct]], core_subhalo_relative_angle, xbins)
+        binned_median = dtk.binned_median(cores['infall_tree_node_mass'][subhalos['core_index'][slct]], core_subhalo_relative_angle, xbins)
         plt.semilogx(dtk.bins_center(xbins), binned_median, '--r', label='Median')
         plt.xlabel("Core Infall Mass")
         plt.ylabel("Relative Velocity Angle Separation")
@@ -899,7 +919,7 @@ def subhalo_comparison(load_cache=False, link_length=0.1, core_fname='/home/dkor
         plt.legend(loc='best')
         plt.tight_layout()
 
-    if True: # plot radial relative velocities
+    if False: # plot radial relative velocities
         core_relative_radial_velocity_mags = velocity_magnitude(cores['halo_relative_radial_vx'], cores['halo_relative_radial_vy'], cores['halo_relative_radial_vz'])
         subhalo_relative_radial_velocity_mags = velocity_magnitude(subhalos['halo_relative_radial_vx'], subhalos['halo_relative_radial_vy'], subhalos['halo_relative_radial_vz'])
         relative_radial_velocity_ratio = core_relative_radial_velocity_mags[subhalos['core_index'][slct]]/subhalo_relative_radial_velocity_mags[slct]
@@ -963,11 +983,11 @@ def subhalo_comparison(load_cache=False, link_length=0.1, core_fname='/home/dkor
         plt.tight_layout()
 
         plt.figure()
-        h, xbins, ybins = np.histogram2d(cores['infall_mass'][subhalos['core_index'][slct]], core_subhalo_relative_radial_angle, bins=(np.logspace(11,16,100), np.linspace(0, 180, 100)))
+        h, xbins, ybins = np.histogram2d(cores['infall_tree_node_mass'][subhalos['core_index'][slct]], core_subhalo_relative_radial_angle, bins=(np.logspace(11,16,100), np.linspace(0, 180, 100)))
         plt.pcolor(xbins, ybins, h.T, cmap='Blues', norm=clr.LogNorm())
-        binned_average = dtk.binned_average(cores['infall_mass'][subhalos['core_index'][slct]], core_subhalo_relative_radial_angle, xbins)
+        binned_average = dtk.binned_average(cores['infall_tree_node_mass'][subhalos['core_index'][slct]], core_subhalo_relative_radial_angle, xbins)
         plt.semilogx(dtk.bins_center(xbins), binned_average, '-r', label='Average')
-        binned_median = dtk.binned_median(cores['infall_mass'][subhalos['core_index'][slct]], core_subhalo_relative_radial_angle, xbins)
+        binned_median = dtk.binned_median(cores['infall_tree_node_mass'][subhalos['core_index'][slct]], core_subhalo_relative_radial_angle, xbins)
         plt.semilogx(dtk.bins_center(xbins), binned_median, '--r', label='Median')
         plt.xlabel("Core Infall Mass")
         plt.ylabel("Relative Radial Velocity Angle Separation")
@@ -986,7 +1006,7 @@ def subhalo_comparison(load_cache=False, link_length=0.1, core_fname='/home/dkor
         plt.legend(loc='best')
         plt.tight_layout()
 
-    if True: # plot radial relative velocities
+    if False: # plot radial relative velocities
         core_relative_radial_velocity_mags = velocity_magnitude(cores['halo_relative_radial_vx'], cores['halo_relative_radial_vy'], cores['halo_relative_radial_vz'])
         subhalo_relative_radial_velocity_mags = velocity_magnitude(subhalos['halo_relative_radial_vx'], subhalos['halo_relative_radial_vy'], subhalos['halo_relative_radial_vz'])
         relative_radial_velocity_ratio = core_relative_radial_velocity_mags[subhalos['core_index'][slct]]/subhalo_relative_radial_velocity_mags[slct]
@@ -1046,11 +1066,11 @@ def subhalo_comparison(load_cache=False, link_length=0.1, core_fname='/home/dkor
         plt.tight_layout()
 
         plt.figure()
-        h, xbins, ybins = np.histogram2d(cores['infall_mass'][subhalos['core_index'][slct]], core_subhalo_relative_radial_angle, bins=(np.logspace(11,16,100), np.linspace(0, 180, 100)))
+        h, xbins, ybins = np.histogram2d(cores['infall_tree_node_mass'][subhalos['core_index'][slct]], core_subhalo_relative_radial_angle, bins=(np.logspace(11,16,100), np.linspace(0, 180, 100)))
         plt.pcolor(xbins, ybins, h.T, cmap='Blues', norm=clr.LogNorm())
-        binned_average = dtk.binned_average(cores['infall_mass'][subhalos['core_index'][slct]], core_subhalo_relative_radial_angle, xbins)
+        binned_average = dtk.binned_average(cores['infall_tree_node_mass'][subhalos['core_index'][slct]], core_subhalo_relative_radial_angle, xbins)
         plt.semilogx(dtk.bins_center(xbins), binned_average, '-r', label='Average')
-        binned_median = dtk.binned_median(cores['infall_mass'][subhalos['core_index'][slct]], core_subhalo_relative_radial_angle, xbins)
+        binned_median = dtk.binned_median(cores['infall_tree_node_mass'][subhalos['core_index'][slct]], core_subhalo_relative_radial_angle, xbins)
         plt.semilogx(dtk.bins_center(xbins), binned_median, '--r', label='Median')
         plt.xlabel("Core Infall Mass")
         plt.ylabel("Relative Radial Velocity Angle Separation")
@@ -1081,7 +1101,7 @@ def subhalo_comparison(load_cache=False, link_length=0.1, core_fname='/home/dkor
         plt.legend(loc='best')
         plt.tight_layout()
 
-    if True: # plot tan relative velocities
+    if False: # plot tan relative velocities
         core_relative_tan_velocity_mags = velocity_magnitude(cores['halo_relative_tan_vx'], cores['halo_relative_tan_vy'], cores['halo_relative_tan_vz'])
         subhalo_relative_tan_velocity_mags = velocity_magnitude(subhalos['halo_relative_tan_vx'], subhalos['halo_relative_tan_vy'], subhalos['halo_relative_tan_vz'])
         relative_tan_velocity_ratio = core_relative_tan_velocity_mags[subhalos['core_index'][slct]]/subhalo_relative_tan_velocity_mags[slct]
@@ -1140,11 +1160,11 @@ def subhalo_comparison(load_cache=False, link_length=0.1, core_fname='/home/dkor
         plt.tight_layout()
 
         plt.figure()
-        h, xbins, ybins = np.histogram2d(cores['infall_mass'][subhalos['core_index'][slct]], core_subhalo_relative_tan_angle, bins=(np.logspace(11,16,100), np.linspace(0, 180, 100)))
+        h, xbins, ybins = np.histogram2d(cores['infall_tree_node_mass'][subhalos['core_index'][slct]], core_subhalo_relative_tan_angle, bins=(np.logspace(11,16,100), np.linspace(0, 180, 100)))
         plt.pcolor(xbins, ybins, h.T, cmap='Blues', norm=clr.LogNorm())
-        binned_average = dtk.binned_average(cores['infall_mass'][subhalos['core_index'][slct]], core_subhalo_relative_tan_angle, xbins)
+        binned_average = dtk.binned_average(cores['infall_tree_node_mass'][subhalos['core_index'][slct]], core_subhalo_relative_tan_angle, xbins)
         plt.semilogx(dtk.bins_center(xbins), binned_average, '-r', label='Average')
-        binned_median = dtk.binned_median(cores['infall_mass'][subhalos['core_index'][slct]], core_subhalo_relative_tan_angle, xbins)
+        binned_median = dtk.binned_median(cores['infall_tree_node_mass'][subhalos['core_index'][slct]], core_subhalo_relative_tan_angle, xbins)
         plt.semilogx(dtk.bins_center(xbins), binned_median, '--r', label='Median')
         plt.xlabel("Core Infall Mass")
         plt.ylabel("Relative Tan Velocity Angle Separation")
@@ -1179,9 +1199,9 @@ def subhalo_comparison(load_cache=False, link_length=0.1, core_fname='/home/dkor
     unmatched_cores = ~matched_cores
     
     bins_dict = {'radius': np.logspace(-3,0, 100),
-                 'infall_mass': np.logspace(11, 16, 100),
+                 'infall_tree_node_mass': np.logspace(11, 16, 100),
                  'infall_step': np.linspace(0, 500, 50)}
-    for x_axis_quant, y_axis_quant in [['infall_mass', 'radius'], ['infall_mass', 'infall_step'], ['infall_step', 'radius']]:
+    for x_axis_quant, y_axis_quant in [['infall_tree_node_mass', 'radius'], ['infall_tree_node_mass', 'infall_step'], ['infall_step', 'radius']]:
         f, axs = plt.subplots(1,2, figsize=(9,5))
         axs[0].set_title('Unmatched Cores')
         axs[1].set_title('Matched Cores')
@@ -1215,7 +1235,7 @@ def subhalo_comparison(load_cache=False, link_length=0.1, core_fname='/home/dkor
         # plt.tight_layout()
 
 
-    for x_axis_quant in ['infall_mass', 'radius', 'infall_step']:
+    for x_axis_quant in ['infall_tree_node_mass', 'radius', 'infall_step']:
         plt.figure()
         xbins = bins_dict[x_axis_quant]
         h_with, _ = np.histogram(cores[x_axis_quant][matched_cores], bins=xbins)
@@ -1232,6 +1252,7 @@ def subhalo_comparison(load_cache=False, link_length=0.1, core_fname='/home/dkor
         plt.tight_layout()
 
     print("subhalos w/ cores", np.float(np.sum(slct))/slct.size)
+    # print("subhalos >{:.2e} w/ cores", np.float(np.sum(slct & slct_mass))/np.sum(slct_mass))
 
     # plt.show()
 
@@ -1244,7 +1265,9 @@ if __name__ == "__main__":
     # core_fname='/home/dkorytov/data/AlphaQ/core_catalog5/07_13_17.AlphaQ.499.coreproperties'
     # core_fname='/home/dkorytov/data/AlphaQ/core_catalog5/07_13_17.AlphaQ.499.coreproperties'
     # core_fname='/home/dkorytov/data/AlphaQ/core_catalog5/07_13_17.AlphaQ.499.coreproperties'
-    cores_fname='/media/luna1/dkorytov/data/AlphaQ/core_catalog6_0.1/09_03_2019.AQ.499.coreproperties'
+    # cores_fname='/media/luna1/dkorytov/data/AlphaQ/core_catalog6_0.1/09_03_2019.AQ.499.coreproperties'
+    cores_fname='/data/a/cpac/dkorytov/data/AlphaQ/core_catalog10_rev4070/499.coreproperties'
     fof_core_and_halo_merging(link_length=core_link_length, cores_fname=cores_fname)
     subhalo_comparison(load_cache=load_cache, link_length=core_link_length)
-    dtk.save_figs("figs/")
+    dtk.save_figs("figs/"+__file__+'/','.pdf')
+    plt.show()
